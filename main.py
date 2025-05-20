@@ -43,6 +43,11 @@ while True:
         else:
             print(f"Skipped malformed data: {data}")
 
+    cv2.putText(frame, f"Scanned: {len(seen_data)}",
+                (frame.shape[1] - 200, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8, (0, 255, 255), 2)
+    
     cv2.imshow("QR Scanner", frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
