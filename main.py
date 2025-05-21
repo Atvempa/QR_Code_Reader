@@ -7,10 +7,12 @@ from collections import Counter
 # --- Initialize Pygame mixer for sound playback ---
 pygame.mixer.init()
 beep_sound_path = os.path.join(os.path.dirname(__file__), "beep.wav")
+error_sound_path = os.path.join(os.path.dirname(__file__),"error-10.wav")
 
 # Load the beep sound
 try:
     beep = pygame.mixer.Sound(beep_sound_path)
+    error_sound = pygame.mixer.Sound(error_sound_path)
 except pygame.error as e:
     print(f"⚠️ Failed to load sound: {e}")
     beep = None
@@ -35,12 +37,16 @@ while True:
     ret, frame = cap.read()
     if not ret:
         print("❌ Failed to grab frame.")
+        if error_sound:
+                error_sound.play()
         break
 
     try:
         data, bbox, _ = qr_detector.detectAndDecode(frame)
     except cv2.error as e:
         print(f"⚠️ OpenCV QR decode error: {e}")
+        if error_sound:
+                error_sound.play()
         data = None
         bbox = None
 
@@ -65,6 +71,8 @@ while True:
                 beep.play()
         else:
             print(f"⚠️ Skipped malformed data: {data}")
+            if error_sound:
+                error_sound.play()
 
     # Draw QR bounding box (optional)
     if bbox is not None and len(bbox) > 0:
@@ -80,14 +88,6 @@ while True:
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.8, (0, 255, 255), 2)
 
-    # Display top 5 first-letter frequencies from Last Names
-    top_first_letters = first_letter_counts.most_common(5)
-    for i, (char, count) in enumerate(top_first_letters):
-        text = f"{char}: {count}"
-        cv2.putText(frame, text,
-                    (frame.shape[1] - 200, 60 + (i * 25)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6, (255, 200, 100), 2)
 
     cv2.imshow("QR Scanner", frame)
 
