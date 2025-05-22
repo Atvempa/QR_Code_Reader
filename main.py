@@ -1,207 +1,183 @@
+import sys
 import cv2
 import csv
 import os
-import pygame
-import sys
-import tkinter as tk
-from tkinter import filedialog
 from collections import Counter
+from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt5.QtWidgets import QFileDialog, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QTextEdit, QMessageBox
+from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtCore import QTimer, QUrl
+from PyQt5.QtMultimedia import QSoundEffect
 
-# Setup tkinter for file dialogs
-tk.Tk().withdraw()
+# Initialize sound effects
+beep = QSoundEffect()
+error_sound = QSoundEffect()
+if os.path.exists("beep.wav"):
+    beep.setSource(QUrl.fromLocalFile(os.path.abspath("beep.wav")))
+if os.path.exists("error-10.wav"):
+    error_sound.setSource(QUrl.fromLocalFile(os.path.abspath("error-10.wav")))
 
-# Initialize Pygame
-pygame.init()
-pygame.font.init()
-pygame.mixer.init()
+class QRScannerApp(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("QR Code Scanner - PyQt5 Edition")
+        self.setGeometry(100, 100, 900, 700)
+        self.setStyleSheet("background-color: #2e2e2e; color: #f0f0f0;")
 
-WIDTH, HEIGHT = 1000, 700
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("QR Code Scanner UI")
-font = pygame.font.SysFont("Arial", 24)
-clock = pygame.time.Clock()
+        self.video_label = QLabel(self)
+        self.video_label.setFixedSize(640, 480)
 
-# Sound Defaults
-beep_path = "beep.wav"
-error_path = "error-10.wav"
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setStyleSheet("background-color: #1e1e1e; color: #a0ffa0;")
 
-def load_sound(path):
-    try:
-        return pygame.mixer.Sound(path)
-    except pygame.error:
-        return None
+        self.scan_count_label = QLabel("Scanned: 0")
+        self.error_count_label = QLabel("Errors: 0")
+        self.letter_freq_label = QLabel("Letter Frequencies: {}")
 
-beep = load_sound(beep_path)
-error_sound = load_sound(error_path)
+        self.select_csv_btn = QPushButton("Select CSV File")
+        self.select_csv_btn.clicked.connect(self.select_csv_file)
 
-# OpenCV QR Setup
-cap = cv2.VideoCapture(0)
-qr_detector = cv2.QRCodeDetector()
+        self.export_btn = QPushButton("Export CSV")
+        self.export_btn.clicked.connect(self.export_csv)
 
-# State
-seen_data = set()
-first_letter_counts = Counter()
-error_count = 0
-csv_file = "output.csv"
-scan_log = []
-scroll_offset = 0
-max_scroll = 0
-scroll_speed = 20
+        self.reset_btn = QPushButton("Reset Counters")
+        self.reset_btn.clicked.connect(self.reset_counters)
 
-# Create CSV if missing
-if not os.path.exists(csv_file):
-    with open(csv_file, mode='w', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(['Name Card ID', 'Last Name', 'First Name', 'School', 'Session'])
+        self.select_beep_btn = QPushButton("Select Beep Sound")
+        self.select_beep_btn.clicked.connect(self.select_beep_sound)
 
-# Button Helper
-def draw_button(text, x, y, w, h, action=None):
-    mouse = pygame.mouse.get_pos()
-    click = pygame.mouse.get_pressed()
-    color = (70, 130, 180) if x+w > mouse[0] > x and y+h > mouse[1] > y else (100, 100, 100)
-    pygame.draw.rect(screen, color, (x, y, w, h), border_radius=8)
-    label = font.render(text, True, (255, 255, 255))
-    screen.blit(label, (x + 10, y + 10))
-    if click[0] == 1 and x+w > mouse[0] > x and y+h > mouse[1] > y:
-        pygame.time.wait(200)
-        if action:
-            action()
+        self.select_error_btn = QPushButton("Select Error Sound")
+        self.select_error_btn.clicked.connect(self.select_error_sound)
 
-# Button Actions
-def select_csv_file():
-    global csv_file
-    path = filedialog.asksaveasfilename(defaultextension=".csv")
-    if path:
-        csv_file = path
+        layout = QVBoxLayout()
+        layout.addWidget(self.video_label)
+        layout.addWidget(self.scan_count_label)
+        layout.addWidget(self.error_count_label)
+        layout.addWidget(self.letter_freq_label)
+        layout.addWidget(self.log)
 
-def export_csv():
-    try:
-        dest = filedialog.asksaveasfilename(defaultextension=".csv")
-        if dest:
-            with open(csv_file, 'r') as src, open(dest, 'w', newline='') as dst:
-                dst.write(src.read())
-    except Exception as e:
-        print("Export failed:", e)
+        btn_layout = QHBoxLayout()
+        btn_layout.addWidget(self.select_csv_btn)
+        btn_layout.addWidget(self.export_btn)
+        btn_layout.addWidget(self.reset_btn)
+        layout.addLayout(btn_layout)
 
-def select_beep_sound():
-    global beep
-    path = filedialog.askopenfilename(filetypes=[("WAV files", "*.wav")])
-    if path:
-        beep = load_sound(path)
+        sound_layout = QHBoxLayout()
+        sound_layout.addWidget(self.select_beep_btn)
+        sound_layout.addWidget(self.select_error_btn)
+        layout.addLayout(sound_layout)
 
-def select_error_sound():
-    global error_sound
-    path = filedialog.askopenfilename(filetypes=[("WAV files", "*.wav")])
-    if path:
-        error_sound = load_sound(path)
+        self.setLayout(layout)
 
-def reset_counters():
-    seen_data.clear()
-    first_letter_counts.clear()
-    scan_log.clear()
-    global error_count, scroll_offset
-    error_count = 0
-    scroll_offset = 0
+        self.csv_file = "output.csv"
+        self.seen_data = set()
+        self.first_letter_counts = Counter()
+        self.error_count = 0
 
-# Main Loop
-running = True
-while running:
-    screen.fill((30, 30, 30))
+        if not os.path.exists(self.csv_file):
+            with open(self.csv_file, mode='w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['Name Card ID', 'Last Name', 'First Name', 'School', 'Session'])
 
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-        elif event.type == pygame.MOUSEWHEEL:
-            scroll_offset -= event.y * scroll_speed
-        elif event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_UP:
-                scroll_offset += scroll_speed
-            elif event.key == pygame.K_DOWN:
-                scroll_offset -= scroll_speed
+        self.cap = cv2.VideoCapture(0)
+        self.qr_detector = cv2.QRCodeDetector()
 
-    ret, frame = cap.read()
-    if not ret:
-        print("\u274c Failed to grab frame.")
-        if error_sound:
-            error_sound.play()
-        error_count += 1
-        continue
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_frame)
+        self.timer.start(30)
 
-    data, bbox, _ = qr_detector.detectAndDecode(frame)
-    if data and data not in seen_data:
-        data = str(data)
-        seen_data.add(data)
-        fields = data.strip().split(',')
-        if len(fields) == 5:
-            with open(csv_file, mode='a', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow(fields)
-            scan_log.append(data)
-            if beep:
-                beep.play()
-        else:
-            error_count += 1
-            if error_sound:
+    def select_csv_file(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Select CSV File", "", "CSV Files (*.csv)")
+        if path:
+            self.csv_file = path
+
+    def export_csv(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Export CSV", "", "CSV Files (*.csv)")
+        if path:
+            try:
+                with open(self.csv_file, 'r') as src, open(path, 'w', newline='') as dst:
+                    dst.write(src.read())
+            except Exception as e:
+                QMessageBox.warning(self, "Export Failed", str(e))
+
+    def reset_counters(self):
+        self.seen_data.clear()
+        self.first_letter_counts.clear()
+        self.error_count = 0
+        self.log.clear()
+        self.update_labels()
+
+    def select_beep_sound(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Select Beep Sound", "", "WAV Files (*.wav)")
+        if path:
+            beep.setSource(QUrl.fromLocalFile(path))
+
+    def select_error_sound(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Select Error Sound", "", "WAV Files (*.wav)")
+        if path:
+            error_sound.setSource(QUrl.fromLocalFile(path))
+
+    def update_labels(self):
+        self.scan_count_label.setText(f"Scanned: {len(self.seen_data)}")
+        self.error_count_label.setText(f"Errors: {self.error_count}")
+        self.letter_freq_label.setText(f"Letter Frequencies: {dict(self.first_letter_counts)}")
+
+    def update_frame(self):
+        ret, frame = self.cap.read()
+        if not ret:
+            self.error_count += 1
+            if error_sound.isLoaded():
                 error_sound.play()
+            self.update_labels()
+            return
 
-    if bbox is not None and len(bbox) > 0:
-        for i in range(len(bbox)):
-            pt1 = tuple(map(int, bbox[i][0]))
-            pt2 = tuple(map(int, bbox[(i+1) % len(bbox)][0]))
-            cv2.line(frame, pt1, pt2, (0, 255, 0), 2)
+        data, bbox, _ = self.qr_detector.detectAndDecode(frame)
+        if data and data not in self.seen_data:
+            fields = data.strip().split(',')
+            if len(fields) == 5:
+                self.seen_data.add(data)
+                with open(self.csv_file, mode='a', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(fields)
 
-    # Render frame to pygame
-    frame = cv2.resize(frame, (500, 375))
-    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    frame_surface = pygame.surfarray.make_surface(frame_rgb.swapaxes(0, 1))
-    screen.blit(frame_surface, (30, 30))
+                last_name = fields[1].strip()
+                if last_name:
+                    first_char = last_name[0].upper()
+                    if first_char.isalpha():
+                        self.first_letter_counts[first_char] += 1
 
-    # Buttons
-    draw_button("Select CSV File", 600, 30, 200, 40, select_csv_file)
-    draw_button("Export CSV", 600, 80, 200, 40, export_csv)
-    draw_button("Select Beep Sound", 600, 130, 200, 40, select_beep_sound)
-    draw_button("Select Error Sound", 600, 180, 200, 40, select_error_sound)
-    draw_button("Reset Counters", 600, 230, 200, 40, reset_counters)
+                if beep.isLoaded():
+                    beep.play()
 
-    # Stats
-    scan_text = font.render(f"Scanned: {len(seen_data)}", True, (255, 255, 255))
-    screen.blit(scan_text, (600, 300))
+                self.log.append(f"\u2714 {data}")
+            else:
+                self.error_count += 1
+                self.log.append(f"\u274c Malformed: {data}")
+                if error_sound.isLoaded():
+                    error_sound.play()
+            self.update_labels()
 
-    error_text = font.render(f"Errors: {error_count}", True, (255, 100, 100))
-    screen.blit(error_text, (600, 340))
+        # Draw bounding box
+        if bbox is not None and len(bbox) > 0:
+            for i in range(len(bbox)):
+                pt1 = tuple(map(int, bbox[i][0]))
+                pt2 = tuple(map(int, bbox[(i+1) % len(bbox)][0]))
+                cv2.line(frame, pt1, pt2, (0, 255, 0), 2)
 
-    y = 380
-    for letter, count in sorted(first_letter_counts.items()):
-        text = font.render(f"{letter}: {count}", True, (200, 200, 100))
-        screen.blit(text, (600, y))
-        y += 30
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w, ch = frame.shape
+        bytes_per_line = ch * w
+        qt_image = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        self.video_label.setPixmap(QPixmap.fromImage(qt_image))
 
-    # Scrollable log panel
-    log_area = pygame.Rect(30, 430, 940, 240)
-    pygame.draw.rect(screen, (50, 50, 50), log_area)
-    pygame.draw.rect(screen, (100, 100, 100), log_area, 2)
+    def closeEvent(self, event):
+        self.cap.release()
+        cv2.destroyAllWindows()
+        event.accept()
 
-    combined_log = ["Recent Scans:"] + [f"\u2714 {entry}" for entry in scan_log]
-    max_scroll = max(0, len(combined_log) * 28 - log_area.height)
-
-    # ✅ Clamp scroll_offset
-    scroll_offset = max(0, min(scroll_offset, max_scroll))
-
-    surface_log = pygame.Surface((log_area.width, len(combined_log) * 28), pygame.SRCALPHA)
-    surface_log.fill((0, 0, 0, 0))
-
-    for i, entry in enumerate(combined_log):
-        color = (200, 255, 200) if entry.startswith("\u2714") else (255, 150, 150) if entry.startswith("\u2718") else (255, 255, 255)
-        entry_text = font.render(entry, True, color)
-        surface_log.blit(entry_text, (10, i * 28))
-
-    screen.blit(surface_log, log_area.topleft, area=pygame.Rect(0, scroll_offset, log_area.width, log_area.height))
-
-    pygame.display.flip()
-    clock.tick(30)
-
-# Cleanup
-cap.release()
-cv2.destroyAllWindows()
-pygame.quit()
-sys.exit()
+if __name__ == '__main__':
+    app = QtWidgets.QApplication(sys.argv)
+    main_window = QRScannerApp()
+    main_window.show()
+    sys.exit(app.exec_())
